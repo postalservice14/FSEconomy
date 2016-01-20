@@ -17,7 +17,7 @@ def do_work(args):
     aggregated = fse.get_aggregated_assignments(args.cargo)
 
     result = pd.DataFrame(columns=['FromIcao', 'ToIcao', 'Amount', 'Pay', 'Assignments', 'PtAssignment', 'All-In',
-                                   'MakeModel', 'Location', 'Seats', 'Cruise', 'RentalDry', 'RentalWet',
+                                   'MakeModel', 'Location', 'Seats', 'CruiseSpeed', 'RentalDry', 'RentalWet',
                                    'CraftDistance', 'Distance', 'DryRent', 'WetRent', 'DryEarnings', 'WetEarnings',
                                    'DryRatio', 'WetRatio'])
     index = 0
@@ -27,7 +27,7 @@ def do_work(args):
         best_aircraft = fse.get_best_craft(row['FromIcao'], args.radius)
         if best_aircraft is None:
             continue
-        for column in ['MakeModel', 'Location', 'Seats', 'Cruise', 'RentalDry', 'RentalWet']:
+        for column in ['MakeModel', 'Location', 'Seats', 'CruiseSpeed', 'RentalDry', 'RentalWet']:
             row[column] = best_aircraft[column]
         best_assignments = fse.get_best_assignments(row)
         if best_assignments is None:
@@ -37,8 +37,8 @@ def do_work(args):
         row['Assignments'] = str(best_assignments['Amount'].tolist())
         row['CraftDistance'] = fse.get_distance(row['FromIcao'], row['Location'])
         row['Distance'] = fse.get_distance(row['FromIcao'], row['ToIcao'])
-        row['DryRent'] = round((row['Distance'] + row['CraftDistance']) * row['RentalDry'] / row['Cruise'], 2)
-        row['WetRent'] = round((row['Distance'] + row['CraftDistance']) * row['RentalWet'] / row['Cruise'], 2)
+        row['DryRent'] = round((row['Distance'] + row['CraftDistance']) * row['RentalDry'] / row['CruiseSpeed'], 2)
+        row['WetRent'] = round((row['Distance'] + row['CraftDistance']) * row['RentalWet'] / row['CruiseSpeed'], 2)
         row['DryEarnings'] = common.get_earnings(row, 'DryRent')
         row['WetEarnings'] = common.get_earnings(row, 'WetRent')
         if not row['DryEarnings'] + row['WetEarnings']:

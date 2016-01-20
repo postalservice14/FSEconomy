@@ -1,10 +1,8 @@
 import pandas as pd
 import pickle
-import time
 from math import atan2, cos, pow, sin, sqrt
 
 import const
-
 
 get_ratio_func = lambda x: round(x['Earnings'] / ((x['Distance'] + x['CraftDistance']) / x['CraftCruise']), 2)
 
@@ -27,7 +25,7 @@ def get_earnings(row, rent_type):
 
 
 def get_ratio(x, earnings_column):
-    return round(x[earnings_column] / ((x['Distance'] + x['CraftDistance']) / x['Cruise']), 2)
+    return round(x[earnings_column] / ((x['Distance'] + x['CraftDistance']) / x['CruiseSpeed']), 2)
 
 
 def load_pickled_assignments():
@@ -48,26 +46,11 @@ def load_airports():
 
 
 def load_aircrafts():
-    aircrafts = pd.read_csv(const.AIRCRAFTS_FILENAME)
-    aircrafts.columns = ['Model', 'Crew', 'Seats', 'Cruise', 'Ext1', 'LTip', 'LAux', 'LMain', 'Center', 'Center2',
-                         'Center3', 'RMain', 'RAux', 'RTip', 'Ext2', 'GPH', 'FuelType', 'MTOW', 'EmptyWeight', 'Price']
-    aircrafts.Seats = aircrafts.Seats.astype(int)
-    aircrafts.Crew = aircrafts.Crew.astype(int)
-    aircrafts.Cruise = aircrafts.Cruise.astype(float)
-    return aircrafts
-
-
-def retry(func, *args, **kwargs):
-    c = 1
-    count = kwargs.pop("count", 10)
-    error_type = kwargs.pop("error_type", Exception)
-    interval = kwargs.pop("interval", 1)
-    while True:
-        try:
-            return func(*args, **kwargs)
-        except error_type:
-            print 'retry'
-            if c >= count:
-                raise
-            c += 1
-            time.sleep(interval)
+    aircraft = pd.read_csv(const.AIRCRAFTS_FILENAME)
+    aircraft.columns = ['Model', 'Crew', 'Seats', 'CruiseSpeed', 'GPH', 'FuelType', 'MTOW', 'EmptyWeight', 'Price',
+                         'Ext1', 'LTip', 'LAux', 'LMain', 'Center1', 'Center2', 'Center3', 'RMain', 'RAux', 'RTip',
+                         'RExt2', 'Engines', 'EnginePrice']
+    aircraft.Seats = aircraft.Seats.astype(int)
+    aircraft.Crew = aircraft.Crew.astype(int)
+    aircraft.CruiseSpeed = aircraft.CruiseSpeed.astype(int)
+    return aircraft
