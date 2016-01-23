@@ -1,5 +1,9 @@
+import pdb
+import traceback
+
 import argparse
 import pandas as pd
+import sys
 
 import common
 from fseconomy import FSEconomy
@@ -7,9 +11,7 @@ from fseconomy import FSEconomy
 
 def do_work(args):
     fse = FSEconomy(args.local, args.ukey, args.skey)
-    #fse.get_logs(2178373)
 
-    # TODO: we have unnamed columns after data fetching
     for col in fse.assignments.columns:
         if 'Unnamed' in col:
             del fse.assignments[col]
@@ -52,11 +54,8 @@ def do_work(args):
         if row['DryEarnings'] > args.min or row['WetEarnings'] > args.min:
             break
 
-    #aggregated = aggregated.dropna()
+    print result.sort_values('DryRatio', ascending=False)
 
-    print result.sort('DryRatio', ascending=False)
-    if args.debug:
-        import pdb; pdb.set_trace()
 
 def main():
     parser = argparse.ArgumentParser()
@@ -76,4 +75,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except:
+        type, value, tb = sys.exc_info()
+        traceback.print_exc()
+        pdb.post_mortem(tb)

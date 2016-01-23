@@ -6,7 +6,6 @@ import requests
 import requests_cache
 from math import radians
 
-from memory_profiler import profile, memory_usage
 from pulp import LpMaximize, LpProblem, LpVariable
 from StringIO import StringIO
 from requests_throttler import BaseThrottler
@@ -14,10 +13,11 @@ from requests_throttler import BaseThrottler
 import common
 import const
 
+
 class FSEconomy(object):
     def __init__(self, local, user_key=None, service_key=None):
         requests_cache.install_cache('fse', expire_after=3600)
-        self.bt = BaseThrottler(name='fse-throttler', reqs_over_time=(9, 60))
+        self.bt = BaseThrottler(name='fse-throttler', reqs_over_time=(1, 2))
         self.bt.start()
         self.airports = common.load_airports()
         self.aircraft = common.load_aircrafts()
@@ -45,49 +45,90 @@ class FSEconomy(object):
             try:
                 thottled_request = self.bt.submit(request)
                 data = thottled_request.response.content
+                if 'To many requests' in data or 'minimum delay' in data:
+                    raise requests.exceptions.ConnectionError
                 return data
             except requests.exceptions.ConnectionError:
+                requests_cache.clear()
                 if i >= 10:
                     raise
+                print 'Retrying Request'
                 i += 1
                 time.sleep(60)
 
+    def send_multi_request(self, paths):
+        request_queue = []
+        for path in paths:
+            query_link = self.generate_request(const.LINK + path)
+            request_queue.append(requests.Request(method='GET', url=query_link))
 
-    def get_aircrafts_by_icao(self, icao):
-        data = self.send_single_request('query=icao&search=aircraft&icao={}'.format(icao))
-        aircraft = pd.DataFrame.from_csv(StringIO(data))
-        if (hasattr(aircraft, 'RentalDry')):
-            aircraft.RentalDry = aircraft.RentalDry.astype(float)
-        else:
-            aircraft.RentalDry = 0.0
-        if (hasattr(aircraft, 'RentalWet')):
-            aircraft.RentalWet = aircraft.RentalWet.astype(float)
-        else:
-            aircraft.RentalWet = 0.0
-        return aircraft
+        i = 0
+        while True:
+            try:
+                thottled_requests = self.bt.multi_submit(request_queue)
+                responses = [tr.response for tr in thottled_requests]
+                request_queue = []
+                complete_response = []
+                for response in responses:
+                    if 'To many requests' in response.content or 'minimum delay' in response.content:
+                        request_queue.append(response.url)
+                        print response.content
+                    elif 'you are now in a lockout period' in response.content:
+                        raise Exception(response.content)
+                    else:
+                        complete_response.append(response.content)
+
+                if len(request_queue) > 0:
+                    raise requests.exceptions.ConnectionError
+
+                return complete_response
+            except AttributeError:
+                for request in request_queue:
+                    print 'Error with request: ', request
+                raise
+            except requests.exceptions.ConnectionError:
+                requests_cache.clear()
+                if i >= 10:
+                    raise
+                print 'Retrying Request'
+                i += 1
+                time.sleep(60)
+
+    def get_aircrafts_by_icaos(self, icaos):
+        aircraft_requests = []
+        for icao in icaos:
+            aircraft_requests.append('query=icao&search=aircraft&icao={}'.format(icao))
+
+        responses = self.send_multi_request(aircraft_requests)
+        all_aircraft = []
+        for response in responses:
+            aircraft = pd.DataFrame.from_csv(StringIO(response))
+            try:
+                aircraft.RentalDry = aircraft.RentalDry.astype(float)
+                aircraft.RentalWet = aircraft.RentalWet.astype(float)
+                all_aircraft.append(aircraft)
+            except:
+                print 'error updating rental info: ', response
+
+        return all_aircraft
 
     def get_assignments(self):
         assignments = pd.DataFrame()
 
         i = 0
         assignment_requests = []
-        throttled_requests = []
-        number_at_a_time = 1500
-        while i+number_at_a_time < len(self.airports):
-            query_link = self.generate_request(const.LINK + 'query=icao&search=jobsfrom&icaos={}'.format('-'.join(self.airports.icao[i:i+number_at_a_time])))
-            request = requests.Request(method='GET', url=query_link)
-            assignment_requests.append(request)
-            throttled_requests = self.bt.multi_submit(assignment_requests)
+        number_at_a_time = 1000
+        while i + number_at_a_time < len(self.airports):
+            assignment_requests.append(
+                'query=icao&search=jobsfrom&icaos={}'.format('-'.join(self.airports.icao[i:i + number_at_a_time])))
             i += number_at_a_time
-        responses = [tr.response for tr in throttled_requests]
-        assignments = [pd.concat([assignments, pd.DataFrame.from_csv(data)]) for data in responses]
 
-        query_link = self.generate_request(const.LINK + 'query=icao&search=jobsfrom&icaos={}'.format('-'.join(self.airports.icao[i:len(self.airports)-1])))
-        request = requests.Request(method='GET', url=query_link)
-        throttled_request = self.bt.submit(request)
+        responses = self.send_multi_request(assignment_requests)
+        for data in responses:
+            assignments = pd.concat([assignments, pd.DataFrame.from_csv(StringIO(data))])
 
-        # assignments = pd.concat([assignments, pd.DataFrame.from_csv(StringIO(throttled_request.response.content))])
-        assignments = pd.DataFrame.from_csv(StringIO(throttled_request.response.content))
+        response = self.send_single_request('query=icao&search=jobsfrom&icaos={}'.format('-'.join(self.airports.icao[i:len(self.airports) - 1])))
+        assignments = pd.concat([assignments, pd.DataFrame.from_csv(StringIO(response))])
         with open('assignments', 'wb') as f:
             pickle.dump(assignments, f)
         return assignments
@@ -101,8 +142,8 @@ class FSEconomy(object):
         w_list = df.Amount.tolist()
         p_list = df.Pay.tolist()
         x_list = [LpVariable('x{}'.format(i), 0, 1, 'Integer') for i in range(1, 1 + len(w_list))]
-        prob += sum([x*p for x, p in zip(x_list, p_list)]), 'obj'
-        prob += sum([x*w for x, w in zip(x_list, w_list)]) <= row['Seats'], 'c1'
+        prob += sum([x * p for x, p in zip(x_list, p_list)]), 'obj'
+        prob += sum([x * w for x, w in zip(x_list, w_list)]) <= row['Seats'], 'c1'
         prob.solve()
         return df.iloc[[i for i in range(len(x_list)) if x_list[i].varValue]]
 
@@ -110,13 +151,15 @@ class FSEconomy(object):
         print 'Searching for the best aircraft from {}'.format(icao)
         max_seats = 0
         best_aircraft = None
-        for near_icao in self.get_closest_airports(icao, radius).icao:
-            print '--Searching for the best aircraft from {}'.format(near_icao)
-            aircrafts = self.get_aircrafts_by_icao(near_icao)
-            if not len(aircrafts):
+        near_icaos = self.get_closest_airports(icao, radius).icao
+
+        all_aircraft = self.get_aircrafts_by_icaos(near_icaos)
+        for aircraft in all_aircraft:
+            if not len(aircraft):
                 continue
-            merged = pd.DataFrame.merge(aircrafts, self.aircraft, left_on='MakeModel', right_on='Model', how='inner')
-            merged = merged[(~merged.MakeModel.isin(const.IGNORED_AIRCRAFTS)) & (merged.RentalWet + merged.RentalDry > 0)]
+            merged = pd.DataFrame.merge(aircraft, self.aircraft, left_on='MakeModel', right_on='Model', how='inner')
+            merged = merged[
+                (~merged.MakeModel.isin(const.IGNORED_AIRCRAFTS)) & (merged.RentalWet + merged.RentalDry > 0)]
             if not len(merged):
                 continue
             aircraft = merged.ix[merged.Seats.idxmax()]
@@ -137,8 +180,11 @@ class FSEconomy(object):
         return filtered_airports[distance_vector < nm]
 
     def get_distance(self, from_icao, to_icao):
-        lat1, lon1 = [radians(x) for x in self.airports[self.airports.icao == from_icao][['lat', 'lon']].iloc[0]]
-        lat2, lon2 = [radians(x) for x in self.airports[self.airports.icao == to_icao][['lat', 'lon']].iloc[0]]
+        try:
+            lat1, lon1 = [radians(x) for x in self.airports[self.airports.icao == from_icao][['lat', 'lon']].iloc[0]]
+            lat2, lon2 = [radians(x) for x in self.airports[self.airports.icao == to_icao][['lat', 'lon']].iloc[0]]
+        except IndexError:
+            return 9999.9
         return common.get_distance(lat1, lon1, lat2, lon2)
 
     def get_logs(self, from_id):
@@ -153,7 +199,8 @@ class FSEconomy(object):
         logs = logs[(logs.FlightTimeH > 0) | (logs.FlightTimeM > 0)]
         logs = logs[logs.Distance > 0]
         logs['AvSpeed'] = logs.apply(lambda x: 60 * x['Distance'] / (60 * x['FlightTimeH'] + x['FlightTimeM']), axis=1)
-        import pdb; pdb.set_trace()
+        import pdb
+        pdb.set_trace()
 
     def generate_request(self, query_link):
         if self.user_key:

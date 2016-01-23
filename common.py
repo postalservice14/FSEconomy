@@ -11,8 +11,8 @@ def get_distance(lat1, lon1, lat2, lon2):
     r = 6371000
     dlon = lon2 - lon1
     dlat = lat2 - lat1
-    a = pow(sin(dlat/2), 2) + cos(lat1) * cos(lat2) * pow(sin(dlon/2), 2)
-    c = 2 * atan2(sqrt(a), sqrt(1-a))
+    a = pow(sin(dlat / 2), 2) + cos(lat1) * cos(lat2) * pow(sin(dlon / 2), 2)
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
     return round((r * c) / 1850, 1)
 
 
@@ -48,8 +48,8 @@ def load_airports():
 def load_aircrafts():
     aircraft = pd.read_csv(const.AIRCRAFTS_FILENAME)
     aircraft.columns = ['Model', 'Crew', 'Seats', 'CruiseSpeed', 'GPH', 'FuelType', 'MTOW', 'EmptyWeight', 'Price',
-                         'Ext1', 'LTip', 'LAux', 'LMain', 'Center1', 'Center2', 'Center3', 'RMain', 'RAux', 'RTip',
-                         'RExt2', 'Engines', 'EnginePrice']
+                        'Ext1', 'LTip', 'LAux', 'LMain', 'Center1', 'Center2', 'Center3', 'RMain', 'RAux', 'RTip',
+                        'RExt2', 'Engines', 'EnginePrice', '']
     aircraft.Seats = aircraft.Seats.astype(int)
     aircraft.Crew = aircraft.Crew.astype(int)
     aircraft.CruiseSpeed = aircraft.CruiseSpeed.astype(int)
