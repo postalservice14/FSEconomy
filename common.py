@@ -4,8 +4,6 @@ from math import atan2, cos, pow, sin, sqrt
 
 import const
 
-get_ratio_func = lambda x: round(x['Earnings'] / ((x['Distance'] + x['CraftDistance']) / x['CraftCruise']), 2)
-
 
 def get_distance(lat1, lon1, lat2, lon2):
     r = 6371000
@@ -25,7 +23,7 @@ def get_earnings(row, rent_type):
 
 
 def get_ratio(x, earnings_column):
-    return round(x[earnings_column] / ((x['Distance'] + x['CraftDistance']) / x['CruiseSpeed']), 2)
+    return round(x[earnings_column] / ((x['Distance'] + x['CraftDistance']) / x['aircraft']['CruiseSpeed']), 2)
 
 
 def load_pickled_assignments():
@@ -35,6 +33,7 @@ def load_pickled_assignments():
     assignments.Amount = assignments.Amount.astype(int)
     assignments['All-In'] = assignments['All-In'].map(lambda x: True if x == 'true' else False)
     assignments.PtAssignment = assignments.PtAssignment.map(lambda x: True if x == 'true' else False)
+    assignments.UnitType = assignments.UnitType.astype(str)
     return assignments
 
 

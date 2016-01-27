@@ -29,13 +29,15 @@ class FSEconomy(object):
             self.assignments = self.get_assignments()
 
     def get_aggregated_assignments(self, cargo=False):
-        if cargo:
-            self.assignments = self.assignments[self.assignments.UnitType == 'kg']
-        else:
-            self.assignments = self.assignments[self.assignments.UnitType == 'passengers']
-        grouped = self.assignments.groupby(['FromIcao', 'ToIcao'], as_index=False)
+        self.assignments = self.assignments[self.assignments.UnitType == 'kg']
+        # if cargo:
+        #     self.assignments = self.assignments[self.assignments.UnitType == 'kg']
+        # else:
+        #     self.assignments = self.assignments[self.assignments.UnitType == 'passengers']
+        grouped = self.assignments.groupby(['FromIcao', 'ToIcao', 'UnitType'], as_index=False)
         aggregated = grouped.aggregate(np.sum)
-        return aggregated.sort_values('Pay', ascending=False)
+        aggregated = aggregated.sort_values('Pay', ascending=False)
+        return aggregated
 
     def send_single_request(self, path):
         query_link = self.generate_request(const.LINK + path)
@@ -54,7 +56,7 @@ class FSEconomy(object):
                     raise
                 print 'Retrying Request'
                 i += 1
-                time.sleep(60)
+                time.sleep(2)
 
     def send_multi_request(self, paths):
         request_queue = []
@@ -92,7 +94,7 @@ class FSEconomy(object):
                     raise
                 print 'Retrying Request'
                 i += 1
-                time.sleep(60)
+                time.sleep(2)
 
     def get_aircrafts_by_icaos(self, icaos):
         aircraft_requests = []
@@ -123,19 +125,42 @@ class FSEconomy(object):
                 'query=icao&search=jobsfrom&icaos={}'.format('-'.join(self.airports.icao[i:i + number_at_a_time])))
             i += number_at_a_time
 
+        f = open('assignments.csv', 'a')
         responses = self.send_multi_request(assignment_requests)
         for data in responses:
+            f.write(data)
             assignments = pd.concat([assignments, pd.DataFrame.from_csv(StringIO(data))])
 
         response = self.send_single_request('query=icao&search=jobsfrom&icaos={}'.format('-'.join(self.airports.icao[i:len(self.airports) - 1])))
         assignments = pd.concat([assignments, pd.DataFrame.from_csv(StringIO(response))])
+        f.write(response)
         with open('assignments', 'wb') as f:
             pickle.dump(assignments, f)
         return assignments
 
+    def max_fuel(self, aircraft):
+        return aircraft['Ext1'] + aircraft['LTip'] + aircraft['LAux'] + aircraft['LMain'] + aircraft['Center1'] + aircraft['Center2'] + aircraft['Center3'] + aircraft['RMain'] + aircraft['RAux'] + aircraft['RTip'] + aircraft['RExt2']
+
+    def estimated_fuel(self, distance, aircraft):
+        # Add 1.5 hours
+        return (((round(distance / aircraft['CruiseSpeed'], 1)) * aircraft['GPH']) + (aircraft['GPH'] * 1.5)) * 0.81
+
     def get_best_assignments(self, row):
-        df = self.assignments[(self.assignments.FromIcao == row['FromIcao']) &
-                              (self.assignments.ToIcao == row['ToIcao']) & (self.assignments.Amount <= row['Seats'])]
+        max_cargo = 0
+        if row['UnitType'] == 'passengers':
+            df = self.assignments[(self.assignments.FromIcao == row['FromIcao']) &
+                                  (self.assignments.ToIcao == row['ToIcao']) &
+                                  (self.assignments.Amount <= row['Seats']) &
+                                  (self.assignments.UnitType == 'passengers')]
+        else:
+            distance = self.get_distance(row['FromIcao'], row['ToIcao'])
+            max_cargo = round(row['aircraft']['MTOW'] - row['aircraft']['EmptyWeight'] - self.estimated_fuel(distance, row['aircraft']))
+            if max_cargo <= 0:
+                return None
+            df = self.assignments[(self.assignments.FromIcao == row['FromIcao']) &
+                                  (self.assignments.ToIcao == row['ToIcao']) &
+                                  (self.assignments.Amount <= max_cargo) &
+                                  (self.assignments.UnitType == 'kg')]
         if not len(df):
             return None
         prob = LpProblem("Knapsack problem", LpMaximize)
@@ -143,13 +168,16 @@ class FSEconomy(object):
         p_list = df.Pay.tolist()
         x_list = [LpVariable('x{}'.format(i), 0, 1, 'Integer') for i in range(1, 1 + len(w_list))]
         prob += sum([x * p for x, p in zip(x_list, p_list)]), 'obj'
-        prob += sum([x * w for x, w in zip(x_list, w_list)]) <= row['Seats'], 'c1'
+        if (row['UnitType'] == 'passengers'):
+            prob += sum([x * w for x, w in zip(x_list, w_list)]) <= row['Seats'], 'c1'
+        else:
+            prob += sum([x * w for x, w in zip(x_list, w_list)]) <= row['aircraft']['MTOW'], 'c1'
         prob.solve()
         return df.iloc[[i for i in range(len(x_list)) if x_list[i].varValue]]
 
     def get_best_craft(self, icao, radius):
         print 'Searching for the best aircraft from {}'.format(icao)
-        max_seats = 0
+        max_mtow = 0
         best_aircraft = None
         near_icaos = self.get_closest_airports(icao, radius).icao
 
@@ -162,10 +190,10 @@ class FSEconomy(object):
                 (~merged.MakeModel.isin(const.IGNORED_AIRCRAFTS)) & (merged.RentalWet + merged.RentalDry > 0)]
             if not len(merged):
                 continue
-            aircraft = merged.ix[merged.Seats.idxmax()]
-            if aircraft.Seats > max_seats:
+            aircraft = merged.ix[merged.MTOW.idxmax()]
+            if aircraft.MTOW > max_mtow:
                 best_aircraft = aircraft
-                max_seats = aircraft.Seats
+                max_mtow = aircraft.MTOW
         return best_aircraft
 
     def get_closest_airports(self, icao, nm):
